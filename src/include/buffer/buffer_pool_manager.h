@@ -17,6 +17,7 @@
 #include <unordered_map>
 
 #include "buffer/lru_k_replacer.h"
+#include "buffer/clock_replacer.h" //add CLock repalcer for P1
 #include "common/config.h"
 #include "container/hash/extendible_hash_table.h"
 #include "recovery/log_manager.h"
@@ -149,13 +150,14 @@ class BufferPoolManager {
   /** Array of buffer pool pages. */
   Page *pages_;
   /** Pointer to the disk manager. */
-  DiskManager *disk_manager_ __attribute__((__unused__));
+  DiskManager*disk_manager_ __attribute__((__unused__));
   /** Pointer to the log manager. Please ignore this for P1. */
   LogManager *log_manager_ __attribute__((__unused__));
   /** Page table for keeping track of buffer pool pages. */
   ExtendibleHashTable<page_id_t, frame_id_t> *page_table_;
   /** Replacer to find unpinned pages for replacement. */
-  LRUKReplacer *replacer_;
+  LRUKReplacer *replacer_;//change from LRU_Rrpalcer to Replacer
+  class ClockReplacer* clock_replacer_;
   /** List of free frames that don't have any pages on them. */
   std::list<frame_id_t> free_list_;
   /** This latch protects shared data structures. We recommend updating this comment to describe what it protects. */

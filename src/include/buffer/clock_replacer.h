@@ -16,6 +16,7 @@
 #include <mutex>  // NOLINT
 #include <vector>
 
+#include "buffer/buffer_pool_manager.h"
 #include "buffer/replacer.h"
 #include "common/config.h"
 
@@ -44,9 +45,19 @@ class ClockReplacer : public Replacer {
   void Unpin(frame_id_t frame_id) override;
 
   auto Size() -> size_t override;
+  struct frame_info {
+    bool is_member;
+    bool flag;
+  };
+  std::vector<frame_info *> clock_volume;
+  
 
  private:
   // TODO(student): implement me!
+  int clock_hand;
+  int buffer_pool_size;
+  int clocksize;
+  std::mutex clock_replacer_lock;
 };
 
 }  // namespace bustub
