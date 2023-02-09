@@ -22,7 +22,12 @@
 namespace bustub {
 
 template <typename K, typename V>
-ExtendibleHashTable<K, V>::ExtendibleHashTable(size_t bucket_size) : bucket_size_(bucket_size) {}
+ExtendibleHashTable<K, V>::ExtendibleHashTable(size_t bucket_size) : bucket_size_(bucket_size) {
+  std::scoped_lock<std::mutex> lock(latch_);
+  global_dir.push_back(0);
+  std::shared_ptr<Bucket> new_bucket=std::make_shared<Bucket>(bucket_size,global_depth_);
+  dir_.push_back(new_bucket);
+}
 
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::IndexOf(const K &key) -> size_t {
@@ -62,67 +67,69 @@ template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::GetNumBucketsInternal() const -> int {
   return num_buckets_;
 }
-template <typename K, typename V>
-auto ExtendibleHashTable<K, V>::Find_bucket_index(const K &key)->int{
-  std::scoped_lock<std::mutex> lock(latch_);
-  size_t hash_num=IndexOf(key);
-  int index=hash_num>>(32-GetGlobalDepth());
-  return index;
-}
 
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Find(const K &key, V &value) -> bool {
-  int index=Find_bucket_index(key);
-  auto find_bucket=dir_[global_dir[index]];
-  return find_bucket->Find(key,value);
+  latch_.lock();
+  size_t index=IndexOf(key);
+  bool res=dir_[global_dir[index]]->Find(key,value);
+  latch_.unlock();
+  return res;
 }
 
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Remove(const K &key) -> bool {
-  int index=Find_bucket_index(key);
-  auto find_bucket=dir_[global_dir[index]];
-  return find_bucket->Remove(key);
-  
+  latch_.lock();
+  size_t index=IndexOf(key);
+  bool res=dir_[global_dir[index]]->Remove(key);
+  latch_.unlock();
+  return res;
 }
 template <typename K, typename V>
 void ExtendibleHashTable<K, V>::RedistributeBucket
-(std::shared_ptr<Bucket> bucket){
-  std::shared_ptr<Bucket> new_add_bucket(new Bucket(bucket_size_,bucket->GetDepth()));
+(std::shared_ptr<Bucket> bucket)
+{
   int index;
-  auto target_list=bucket->GetItems();
-  for(auto p=target_list.begin();p!=target_list.end();p++){
-    index=Find_bucket_index(p->first);
-    if(index%2){
-      new_add_bucket->Insert(p->first,p->second);
-      bucket->Remove(p->first);
+  int mask = 1 << (bucket->GetDepth()-1);
+  std::list<std::pair<K, V>>& target_list=bucket->GetItems();
+  auto p=target_list.begin();
+  for(;p!=target_list.end();){
+    index=IndexOf(p->first);
+    if(index&mask){
+      dir_.back()->Insert(p->first,p->second);
+      target_list.erase(p++);
+      global_dir[index]=num_buckets_-1;
+    }
+    else{
+      p++;
     }
   }
-  dir_.push_back(new_add_bucket);
-  global_dir[index/2*2+1]=dir_.size()-1;
 }
 
 template <typename K, typename V>
 void ExtendibleHashTable<K, V>::Insert(const K &key, const V &value) {
-  int index=Find_bucket_index(key);
-  auto find_bucket=dir_[global_dir[index]];
+  latch_.lock();
+  size_t index=IndexOf(key);
+  std::shared_ptr<Bucket> find_bucket(dir_[global_dir[index]]);
   if(find_bucket->Insert(key,value)){
+    latch_.unlock();
     return;
   }
-  if(GetLocalDepth(global_dir[index])==GetGlobalDepth()){
+  if((find_bucket->GetDepth())==global_depth_){
     global_depth_++;
-    global_dir.resize(2<<global_depth_,-1);
+    global_dir.resize(1<<global_depth_,0);
+    int add_index=1<<(global_depth_-1);
     for(int i=global_dir.size()/2-1;i>=0;i--){
-      if(global_dir[i]!=-1){
-        global_dir[2*i]=global_dir[i];
-        global_dir[2*i+1]=global_dir[i];
-        if(i!=0){
-          global_dir[i]=-1;
-        }
-      }
+        global_dir[i+add_index]=global_dir[i];
     }
   }
   find_bucket->IncrementDepth();
+  int bucket_size=find_bucket->GetItems().size();
+  std::shared_ptr<Bucket>new_bucket=std::make_shared<Bucket>(bucket_size,find_bucket->GetDepth());
+  dir_.push_back(new_bucket);
+  num_buckets_++;
   RedistributeBucket(find_bucket);
+  latch_.unlock();
   Insert(key,value);
 }
 
