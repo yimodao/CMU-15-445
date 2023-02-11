@@ -167,14 +167,13 @@ class ExtendibleHashTable : public HashTable<K, V> {
  private:
   // TODO(student): You may add additional private members and helper functions and remove the ones
   // you don't need.
-  std::vector<int>global_dir;
+  std::vector<int> global_dir;
 
   int global_depth_{0};  // The global depth of the directory
   size_t bucket_size_;   // The size of a bucket
   int num_buckets_{1};   // The number of buckets in the hash table
   mutable std::mutex latch_;
   std::vector<std::shared_ptr<Bucket>> dir_;  // The directory of the hash table
-  auto Find_bucket_index(const K &key) ->int;
 
   // The following functions are completely optional, you can delete them if you have your own ideas.
 

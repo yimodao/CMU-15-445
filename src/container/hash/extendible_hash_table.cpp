@@ -152,11 +152,18 @@ auto ExtendibleHashTable<K, V>::Bucket::Find(const K &key, V &value) -> bool {
 
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Bucket::Remove(const K &key) -> bool {
-  for(auto p=list_.begin();p!=list_.end();p++){
-    if(p->first==key){
-      list_.erase(p);
-      return true;
+  int number=0;
+  for(auto p=list_.begin();p!=list_.end();){
+    if((p->first)==key){
+      list_.erase(p++);
+      number++;
     }
+    else{
+      p++;
+    }
+  }
+  if(number){
+    return true;
   }
   return false;
 }

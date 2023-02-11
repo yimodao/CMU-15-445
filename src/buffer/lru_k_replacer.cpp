@@ -11,83 +11,110 @@
 //===----------------------------------------------------------------------===//
 
 #include "buffer/lru_k_replacer.h"
+#include <climits>
+#include <stdexcept>
 
 namespace bustub {
 
 LRUKReplacer::LRUKReplacer(size_t num_frames, size_t k) : replacer_size_(num_frames), k_(k) {
-    access_record.resize(num_frames);
-    replacer_pool.resize(0);
+    replacer_pool.resize(num_frames,false);
 }
 
 auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
-    if(replacer_pool.size()==0){
+    if(Size()==0){
         frame_id=nullptr;
         return false;
     }
+    latch_.lock();
     size_t max_record_k=0;
-    size_t less_k_recent=0;
+    size_t less_k_recent=ULONG_MAX;
     size_t interval;
-    for(auto i:replacer_pool){
-        if(access_record[i].size()<k_){
-            max_record_k=(1<<16)-1;
-            if(access_record[i].front()>less_k_recent){
-                less_k_recent=access_record[i].front();
-                *frame_id=i;
+    for(size_t i=0;i<replacer_size_;i++){
+        if(replacer_pool[i]){
+            if(access_record[i].size()<k_){
+                max_record_k=ULONG_MAX;
+                if(access_record[i].front()<less_k_recent){
+                    less_k_recent=access_record[i].front();
+                    *frame_id=frame_id_t(i);
+                }
+            }
+            else{
+                interval=(access_record[i].front())-(access_record[i].back());
+                if(interval>max_record_k){
+                    max_record_k=interval;
+                    *frame_id=frame_id_t(i);
+                }
             }
         }
-        else{
-            interval=access_record[i].front()-access_record[i].back();
-            if(interval>max_record_k){
-                max_record_k=interval;
-                *frame_id=i;
-            }
-        }
-    } 
+    }
+    access_record.erase(size_t(*frame_id));
+    replacer_pool[size_t(*frame_id)]=false;
+    latch_.unlock();
     return true; 
 }
 
 void LRUKReplacer::RecordAccess(frame_id_t frame_id) {
-    if(size_t(frame_id)>=replacer_size_-1){
-        throw std::string("access frame out of memory");
+    latch_.lock();
+    if(size_t(frame_id)>replacer_size_-1){
+        latch_.unlock();
+        throw std::runtime_error("access frame out of memory");
     }
-    if(access_record[frame_id].size()==k_){
-        access_record[frame_id].pop_back();
+    current_timestamp_++;
+    if(access_record.count(size_t(frame_id))==0){
+        access_record.insert({size_t(frame_id),std::list<size_t>()});
     }
-    access_record[frame_id].push_front(current_timestamp_);
+    if((access_record[size_t(frame_id)].size())==k_){
+        access_record[size_t(frame_id)].pop_back();
+    }
+    access_record[size_t(frame_id)].push_front(current_timestamp_);
+    latch_.unlock();
 }
 
 void LRUKReplacer::SetEvictable(frame_id_t frame_id, bool set_evictable) {
-    if(size_t(frame_id)<0||size_t(frame_id)>=replacer_size_){
-        throw std::string("access frame out of memory");
+    latch_.lock();
+    if(size_t(frame_id)>=replacer_size_){
+        latch_.unlock();
+        throw std::runtime_error("access frame out of memory");
     }
-    if(set_evictable){
-        replacer_pool.push_back(frame_id);
-        return;
-    }
-    else{
-        for(auto p=replacer_pool.begin();p!=replacer_pool.end();p++){
-            if(*p==size_t(frame_id)){
-                replacer_pool.erase(p);
-                return;
-            }
-        }
-    exit(-1);
-    }
+    replacer_pool[size_t(frame_id)]=set_evictable;
+    latch_.unlock();
+    return;
 }
 
 void LRUKReplacer::Remove(frame_id_t frame_id) {
-    for(auto p=replacer_pool.begin();p!=replacer_pool.end();p++){
-        if(*p==size_t(frame_id)){
-            replacer_pool.erase(p);
-            access_record[frame_id].clear();
-            return;
-        }
+    latch_.lock();
+    if(replacer_pool[size_t(frame_id)]){
+        replacer_pool[size_t(frame_id)]=false;
+        access_record.erase(size_t(frame_id));
+        latch_.unlock();
+        return;
     }
-    throw std::string("remove a non_evictable frame");
+    latch_.unlock();
 }
 
-auto LRUKReplacer::Size() -> size_t { 
-    return replacer_pool.size(); 
+auto LRUKReplacer::Size() -> size_t {
+    latch_.lock();
+    size_t res=0;
+    for(size_t i=0;i<replacer_size_;i++){
+        if(replacer_pool[i]){
+            res++;
+        }
     }
+    latch_.unlock(); 
+    return res;
+}
+auto LRUKReplacer::Data_view()->std::string{
+    latch_.lock();
+    std::string res;
+    for(size_t i=0;i<replacer_size_;i++){
+        if(replacer_pool[i]){
+            res+=('0'+i);
+            res+=",";
+        }
+    }
+    res+= "\n";
+    latch_.unlock();
+    return res;
+}
 
 }  // namespace bustub

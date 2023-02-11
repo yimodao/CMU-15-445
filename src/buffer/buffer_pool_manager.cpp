@@ -39,61 +39,75 @@ BufferPoolManager::~BufferPoolManager() {
 }
 
 auto BufferPoolManager::NewPage(page_id_t *page_id) -> Page * {
-  frame_id_t* search_frame=new frame_id_t();
-  if(free_list_.empty()&&(!replacer_->Evict(search_frame))){
-    delete search_frame;
-    return nullptr;
-  }
-  page_id_t new_page_id=AllocatePage(); 
+  latch_.lock();
+  frame_id_t search_frame;
   if(!free_list_.empty()){
-    *search_frame=free_list_.front();
+    *page_id=AllocatePage();
+    search_frame=free_list_.front();
     free_list_.pop_front();
   }
   else{
-    page_table_->Remove(pages_[*search_frame].GetPageId());
-    if(pages_[*search_frame].is_dirty_){
-      FlushPage(pages_[*search_frame].GetPageId());
+    if(!replacer_->Evict(&search_frame)){
+      page_id=nullptr;
+      latch_.unlock();
+      return nullptr;
+    }
+    *page_id=AllocatePage();
+    page_table_->Remove(pages_[search_frame].GetPageId());
+    if(pages_[search_frame].is_dirty_){
+      pages_[search_frame].pin_count_=0;
+      disk_manager_->WritePage(pages_[search_frame].GetPageId(), pages_[search_frame].GetData());
     }
   }
-  page_table_->Insert(new_page_id, *search_frame);
-  pages_[*search_frame].ResetMemory();
-  pages_[*search_frame].page_id_=new_page_id;
-  replacer_->SetEvictable(*search_frame,false);
-  replacer_->RecordAccess(*search_frame);
-  return &pages_[*search_frame]; 
+  page_table_->Insert(*page_id, search_frame);
+  pages_[search_frame].ResetMemory();
+  pages_[search_frame].page_id_=*page_id;
+  pages_[search_frame].pin_count_=1;
+  pages_[search_frame].is_dirty_=false;
+  replacer_->SetEvictable(search_frame,false);
+  replacer_->RecordAccess(search_frame);
+  latch_.unlock();
+  return &pages_[search_frame]; 
 }
 
 auto BufferPoolManager::FetchPage(page_id_t page_id) -> Page * {
-  frame_id_t* search_frame=new frame_id_t();
-  if (page_table_->Find(page_id, *search_frame)) {
-    replacer_->RecordAccess(*search_frame);
-    return &pages_[*search_frame];
+  latch_.lock();
+  frame_id_t search_frame;
+  if (page_table_->Find(page_id, search_frame)) {
+    replacer_->RecordAccess(search_frame);
+    replacer_->SetEvictable(search_frame,false);
+    latch_.unlock();
+    return &pages_[search_frame];
   }
   if(!free_list_.empty()){
-    *search_frame = free_list_.front();
+    search_frame = free_list_.front();
     free_list_.pop_front();
-    disk_manager_->ReadPage(page_id, pages_[*search_frame].GetData());
-    page_table_->Insert(page_id, *search_frame);
   }
   else{
-    if(!replacer_->Evict(search_frame)){
+    if(!replacer_->Evict(&search_frame)){
+      latch_.unlock();
       return nullptr;
     }
-    if(pages_[*search_frame].is_dirty_){
-      FlushPage(pages_[*search_frame].GetPageId());
+    if(pages_[search_frame].is_dirty_){
+      pages_[search_frame].pin_count_=0;
+      disk_manager_->WritePage(pages_[search_frame].GetPageId(), pages_[search_frame].GetData());
     }
-    replacer_->Remove(*search_frame);
-    page_table_->Remove(pages_[*search_frame].GetPageId());
-    disk_manager_->ReadPage(page_id, pages_[*search_frame].GetData());
-    pages_[*search_frame].is_dirty_=false;
+    replacer_->Remove(search_frame);
+    page_table_->Remove(pages_[search_frame].GetPageId());
   }
-  replacer_->SetEvictable(*search_frame,false);
-  replacer_->RecordAccess(*search_frame);
-  page_table_->Insert(page_id, *search_frame); 
-  return &pages_[*search_frame];
+  disk_manager_->ReadPage(page_id, pages_[search_frame].GetData());
+  pages_[search_frame].is_dirty_=false;
+  pages_[search_frame].pin_count_=1;
+  pages_[search_frame].page_id_=page_id;
+  replacer_->SetEvictable(search_frame,false);
+  replacer_->RecordAccess(search_frame);
+  page_table_->Insert(page_id, search_frame); 
+  latch_.unlock();
+  return &pages_[search_frame];
 }
 
 auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty) -> bool {
+  latch_.lock();
   frame_id_t search_frame;
   if (page_table_->Find(page_id, search_frame)) {
     if (pages_[search_frame].pin_count_ > 0) {
@@ -102,41 +116,53 @@ auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty) -> bool {
         replacer_->SetEvictable(search_frame,true);
         pages_[search_frame].is_dirty_ = is_dirty;
       }
+      latch_.unlock();
       return true;
     }
-    return false;
   }
+  latch_.unlock();
   return false;
 }
 auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
+  latch_.lock();
   frame_id_t search_frame;
   if(page_table_->Find(page_id, search_frame)){
     disk_manager_->WritePage(page_id, pages_[search_frame].GetData());
     pages_[search_frame].is_dirty_ = false;
+    latch_.unlock();
     return true;
   }
+  latch_.unlock();
   return false;
 }
 
 void BufferPoolManager::FlushAllPages() {
-  for (int  i = 0; i < static_cast<int> (pool_size_); i++) {
-    disk_manager_->WritePage(pages_[i].GetPageId(), pages_[i].GetData());
-    pages_[i].is_dirty_ = false;
+  latch_.lock();
+  frame_id_t search_frame;
+  for (size_t i = 0; i < pool_size_; i++) {
+    if(page_table_->Find(pages_[i].GetPageId(),search_frame)){
+      disk_manager_->WritePage(pages_[i].GetPageId(), pages_[i].GetData());
+      pages_[i].is_dirty_ = false;
+    }
   }
+  latch_.unlock();
 }
 
 auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
+  latch_.lock();
   frame_id_t search_frame;
   if(page_table_->Find(page_id, search_frame)){
     if (pages_[search_frame].pin_count_ > 0) {
-        return false;
-      }
+      latch_.unlock();
+      return false;
+    }
     replacer_->Remove(search_frame);
     page_table_->Remove(page_id);
     pages_[search_frame].ResetMemory();
     free_list_.push_back(search_frame);
     DeallocatePage(page_id);
   }
+  latch_.unlock();
   return true;
 }
 
