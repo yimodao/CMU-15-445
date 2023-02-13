@@ -4,18 +4,21 @@
 
 #include <memory>
 #include <thread>  // NOLINT
+#include <iostream>
 
 #include "container/hash/extendible_hash_table.h"
 #include "gtest/gtest.h"
 
 namespace bustub {
 
-TEST(ExtendibleHashTableTest, DISABLED_SampleTest) {
+TEST(ExtendibleHashTableTest, SampleTest) {
   auto table = std::make_unique<ExtendibleHashTable<int, std::string>>(2);
 
   table->Insert(1, "a");
   table->Insert(2, "b");
+  std::cout<<"insert two value"<<std::endl;
   table->Insert(3, "c");
+  std::cout<<"insert the third value,in bucket"<<std::endl;
   table->Insert(4, "d");
   table->Insert(5, "e");
   table->Insert(6, "f");
@@ -42,7 +45,7 @@ TEST(ExtendibleHashTableTest, DISABLED_SampleTest) {
   EXPECT_FALSE(table->Remove(20));
 }
 
-TEST(ExtendibleHashTableTest, DISABLED_ConcurrentInsertTest) {
+TEST(ExtendibleHashTableTest, ConcurrentInsertTest) {
   const int num_runs = 50;
   const int num_threads = 3;
 
